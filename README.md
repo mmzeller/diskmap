@@ -8,6 +8,9 @@ A free disk-space map for your Mac, in the spirit of DaisyDisk, with a few thing
 - **Background checks.** DiskMap can check your disk every day or week on its own and notify you when usage grows past a limit you set, or when the disk is nearly full.
 - **Quick rescans.** Rescan reads only the folders macOS says changed since the last scan, so it usually takes seconds.
 - **Cleanup Basket.** Collect items from anywhere, see the total, and move them to the Trash together.
+- **Categories.** Your disk split into Applications, Documents, Photos, Developer, Caches, App Data, macOS and more, like the Storage page in System Settings but counted from the scan, with the biggest items in each.
+- **Find.** Search the whole scan by name, list the largest files, or filter by kind (videos, installers and disk images, archives and so on).
+- **System & hidden, explained.** The space a scan can't see is broken down into swap, startup files and snapshots, with an option to remove local Time Machine snapshots.
 - **Big & Untouched.** Large files you haven't opened in months (uses Spotlight's "last opened" date).
 - **Duplicates.** Finds identical files by comparing their actual contents.
 
@@ -50,12 +53,13 @@ That gets the latest version from GitHub, rebuilds it and reopens it. Your saved
 - **Cleanup Basket:** drag rows onto Cleanup Basket in the sidebar, click the tray button next to an item, or press ⌘B. Then open the basket and click Move All to Trash.
 - **Background checks:** turn them on from What Grew or DiskMap → Settings. Checks run around 12:40 pm (daily, or Mondays for weekly) even when DiskMap isn't open; if the Mac is asleep, they run when it wakes. You're notified once each time growth since your last scan passes another multiple of your limit (5 GB, then 10 GB, and so on). Clicking the notification opens What Grew.
 - **Menu bar:** optional, in the same settings. With it on, closing the window leaves DiskMap in the menu bar.
-- **Keyboard:** ⌘1 scan the whole disk, ⌘2 scan your home folder, ⌘O choose a folder, ⌘R quick rescan, ⇧⌘R full rescan, ⌘B add to basket, Delete moves the selected item to the Trash, Esc goes up a level.
-- **System & hidden** on a whole-disk scan is space DiskMap can't see as files: macOS itself, local Time Machine snapshots, swap, purgeable files and protected folders.
+- **Keyboard:** ⌘1 scan the whole disk, ⌘2 scan your home folder, ⌘O choose a folder, ⌘R quick rescan, ⇧⌘R full rescan, ⌘F find, ⌘B add to basket, Delete moves the selected item to the Trash, Esc goes up a level.
+- **System & hidden** on a whole-disk scan is space DiskMap can't see as files. Click "What's in System & hidden?" under the map for the breakdown: swap and sleep image, startup and recovery files, and local snapshots plus folders DiskMap can't read. Removing local Time Machine snapshots asks for your password and doesn't touch backups on your Time Machine disk.
 
 ## Notes
 
-- Files under 1 MB are grouped per folder ("312 small files") to keep scans fast and memory use low.
+- Files under 1 MB are grouped per folder ("312 small files") to keep scans fast and memory use low. Find lists files of 1 MB and up.
+- Files inside an app or a library (such as a Photos library) can't be trashed on their own, since that would damage it. Remove the whole app, or delete photos inside Photos.
 - Copies made with Finder's Duplicate command can share space on disk (an APFS feature), so deleting one may free less than the Duplicates tab shows.
 - DiskMap reopens your most recent scan when it starts. The saved scan, the snapshots for What Grew and the size history are kept in `~/Library/Application Support/DiskMap`.
 - Quick rescans fall back to a full scan when macOS's change log can't cover the whole period (for example after it was reset).

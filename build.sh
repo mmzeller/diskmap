@@ -5,7 +5,7 @@ set -uo pipefail
 
 APP_NAME="DiskMap"
 BUNDLE_ID="io.github.mmzeller.DiskMap"
-VERSION="2.0"
+VERSION="2.1"
 BUILD_NUMBER="$(date +%Y%m%d.%H%M)"
 MIN_MACOS="13.0"
 

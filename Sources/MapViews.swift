@@ -469,15 +469,23 @@ struct DiskSummaryBar: View {
     var body: some View {
         if let root = model.root, let volume = model.volume {
             if model.scannedRootPath == "/" {
-                StorageMeter(
-                    segments: [
-                        MeterSegment(label: "Scanned", value: root.size, colors: Palette.blue),
-                        MeterSegment(label: "System & hidden", value: max(0, volume.used - root.size), colors: Palette.graphite),
-                    ],
-                    total: volume.total,
-                    height: 10
-                )
-                .help("System & hidden is macOS itself, local Time Machine snapshots, swap, purgeable files and folders DiskMap couldn't read.")
+                VStack(alignment: .leading, spacing: 6) {
+                    StorageMeter(
+                        segments: [
+                            MeterSegment(label: "Scanned", value: root.size, colors: Palette.blue),
+                            MeterSegment(label: "System & hidden", value: max(0, volume.used - root.size), colors: Palette.graphite),
+                        ],
+                        total: volume.total,
+                        height: 10
+                    )
+                    Button {
+                        model.openHiddenSpace()
+                    } label: {
+                        Label("What's in System & hidden?", systemImage: "questionmark.circle")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.link)
+                }
             } else {
                 StorageMeter(
                     segments: [

@@ -80,6 +80,10 @@ struct MainView: View {
                     }
                 }
         }
+        .sheet(isPresented: $model.showHiddenSheet) {
+            HiddenSpaceSheet()
+                .environmentObject(model)
+        }
         .overlay(alignment: .bottom) {
             if let message = model.statusMessage {
                 HStack(spacing: 8) {
@@ -112,6 +116,10 @@ struct MainView: View {
         switch model.tab {
         case .map:
             MapTab()
+        case .categories:
+            CategoriesTab()
+        case .find:
+            FindTab()
         case .ideas:
             IdeasTab()
         case .growth:
@@ -133,6 +141,8 @@ struct Sidebar: View {
         List(selection: $model.selectedTab) {
             Section("Explore") {
                 row(.map)
+                row(.categories)
+                row(.find)
             }
             Section("Clean Up") {
                 row(.ideas)

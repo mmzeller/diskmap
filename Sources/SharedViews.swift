@@ -34,12 +34,18 @@ enum Palette {
     static let graphite = [Color(red: 0.62, green: 0.65, blue: 0.70), Color(red: 0.40, green: 0.43, blue: 0.49)]
     static let teal = [Color(red: 0.30, green: 0.82, blue: 0.86), Color(red: 0.10, green: 0.58, blue: 0.70)]
     static let red = [Color(red: 1.0, green: 0.42, blue: 0.38), Color(red: 0.88, green: 0.20, blue: 0.22)]
+    static let amber = [Color(red: 1.0, green: 0.80, blue: 0.28), Color(red: 0.96, green: 0.60, blue: 0.10)]
+    static let purple = [Color(red: 0.78, green: 0.50, blue: 1.0), Color(red: 0.58, green: 0.30, blue: 0.90)]
+    static let cyan = [Color(red: 0.40, green: 0.78, blue: 1.0), Color(red: 0.16, green: 0.56, blue: 0.92)]
+    static let brown = [Color(red: 0.78, green: 0.64, blue: 0.50), Color(red: 0.58, green: 0.45, blue: 0.33)]
 }
 
 extension AppModel.Tab {
     var symbol: String {
         switch self {
         case .map: return "chart.pie.fill"
+        case .categories: return "square.stack.3d.up.fill"
+        case .find: return "magnifyingglass"
         case .ideas: return "sparkles"
         case .growth: return "chart.line.uptrend.xyaxis"
         case .untouched: return "clock.fill"
@@ -51,6 +57,8 @@ extension AppModel.Tab {
     var colors: [Color] {
         switch self {
         case .map: return Palette.blue
+        case .categories: return Palette.teal
+        case .find: return Palette.amber
         case .ideas: return Palette.green
         case .growth: return Palette.orange
         case .untouched: return Palette.indigo

@@ -48,7 +48,7 @@ final class Explainer {
     private var cache: [ObjectIdentifier: Explanation] = [:]
     private var misses: Set<ObjectIdentifier> = []
 
-    private static let cacheNames: Set<String> = [
+    static let cacheNames: Set<String> = [
         "cache", "caches", "code cache", "gpucache", "cacheddata", "shadercache", "grshadercache",
         "graphitedawncache", "dawncache", "dawngraphitecache", "dawnwebgpucache", "media cache files",
         "media cache", "component_crx_cache", "cachedextensionvsixs", "cachedprofilesdata", "deriveddata",

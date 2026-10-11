@@ -78,6 +78,8 @@ final class AppModel: ObservableObject {
 
     enum Tab: String, CaseIterable, Identifiable {
         case map = "Map"
+        case categories = "Categories"
+        case find = "Find"
         case ideas = "Cleanup Ideas"
         case growth = "What Grew"
         case untouched = "Big & Untouched"
@@ -150,6 +152,26 @@ final class AppModel: ObservableObject {
     @Published private(set) var duplicateState: DuplicateState = .notStarted
     @Published private(set) var duplicatePhase = ""
     @Published private(set) var duplicateFraction = 0.0
+
+    // Categories
+    @Published private(set) var categories: [CategoryTotal] = []
+    @Published private(set) var categoriesBusy = false
+    private var categoriesGeneration = 0
+
+    // System & hidden breakdown (whole-disk scans)
+    @Published private(set) var hiddenSpace: HiddenSpace?
+    @Published private(set) var hiddenBusy = false
+    @Published var showHiddenSheet = false
+    @Published var showRemoveSnapshotsConfirm = false
+
+    // Find
+    @Published var findText = "" { didSet { scheduleSearch() } }
+    @Published var findKind: FileKind = .any { didSet { scheduleSearch() } }
+    @Published var findMinSize: Int64 = 10_000_000 { didSet { scheduleSearch() } }
+    @Published var findIncludeSystem = false { didSet { scheduleSearch() } }
+    @Published private(set) var findResults: [FileNode] = []
+    @Published private(set) var findBusy = false
+    private var searchTask: Task<Void, Never>?
 
     // Cleanup basket: items collected from anywhere, trashed together. Remembered by path across launches.
     @Published private(set) var basket: [FileNode] = [] {
@@ -239,7 +261,7 @@ final class AppModel: ObservableObject {
 
     func badgeCount(for tab: Tab) -> Int {
         switch tab {
-        case .map: return 0
+        case .map, .categories, .find: return 0
         case .ideas: return ideas.count
         case .growth: return growth?.items.count ?? 0
         case .untouched: return untouched.count
@@ -455,7 +477,101 @@ final class AppModel: ObservableObject {
         restoreBasket(in: newRoot)
         selectedTab = NotificationHandler.takePendingGrowth() ? .growth : .map
         phase = .results
+        hiddenSpace = nil
         refreshUntouched()
+        refreshCategories()
+        scheduleSearch()
+    }
+
+    // MARK: - Categories
+
+    func refreshCategories() {
+        guard let current = root else {
+            categories = []
+            return
+        }
+        categoriesGeneration += 1
+        let generation = categoriesGeneration
+        let homePath = home
+        categoriesBusy = true
+        Task { [weak self] in
+            let totals = await Task.detached(priority: .utility) { () -> [CategoryTotal] in
+                CategoryCounter.compute(root: current, home: homePath)
+            }.value
+            guard let self = self, generation == self.categoriesGeneration else { return }
+            self.categories = totals
+            self.categoriesBusy = false
+        }
+    }
+
+    // MARK: - System & hidden
+
+    /// Space a whole-disk scan can't see as files; nil for other scans.
+    var hiddenBytes: Int64? {
+        guard scannedRootPath == "/", let current = root, let disk = volume else { return nil }
+        return max(0, disk.used - current.size)
+    }
+
+    func refreshHiddenSpace() {
+        guard scannedRootPath == "/", let current = root, let disk = volume, !hiddenBusy else { return }
+        hiddenBusy = true
+        let scanned = current.size
+        let unreadable = unreadableCount
+        Task { [weak self] in
+            let analysis = await Task.detached(priority: .userInitiated) { () -> HiddenSpace in
+                HiddenSpaceAnalyzer.analyze(scanned: scanned, volume: disk, unreadableFolders: unreadable)
+            }.value
+            self?.hiddenSpace = analysis
+            self?.hiddenBusy = false
+        }
+    }
+
+    func openHiddenSpace() {
+        showHiddenSheet = true
+        if hiddenSpace == nil { refreshHiddenSpace() }
+    }
+
+    func removeLocalSnapshots() {
+        hiddenBusy = true
+        Task { [weak self] in
+            let problem = await Task.detached(priority: .userInitiated) { () -> String? in
+                HiddenSpaceAnalyzer.removeLocalSnapshots()
+            }.value
+            guard let self = self else { return }
+            self.hiddenBusy = false
+            if let problem = problem {
+                if !problem.isEmpty { self.alertMessage = problem }
+                return
+            }
+            self.volume = VolumeInfo.forPath(self.scannedRootPath)
+            self.startupVolume = VolumeInfo.forPath("/")
+            self.hiddenSpace = nil
+            self.refreshHiddenSpace()
+            self.showStatus("Removed the local Time Machine snapshots. macOS may take a minute to show the freed space.")
+        }
+    }
+
+    // MARK: - Find
+
+    func scheduleSearch() {
+        searchTask?.cancel()
+        guard let current = root else {
+            findResults = []
+            findBusy = false
+            return
+        }
+        let query = SearchQuery(text: findText, kind: findKind, minSize: findMinSize, includeSystem: findIncludeSystem)
+        findBusy = true
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            if Task.isCancelled { return }
+            let results = await Task.detached(priority: .userInitiated) { () -> [FileNode] in
+                FileSearch.run(root: current, query: query)
+            }.value
+            if Task.isCancelled { return }
+            self?.findResults = results
+            self?.findBusy = false
+        }
     }
 
     func backToStart() {
@@ -610,6 +726,8 @@ final class AppModel: ObservableObject {
 
     func canTrash(_ node: FileNode) -> Bool {
         if node.kind == .smallFiles || node.parent == nil { return false }
+        // Pieces of an app or a library (like a Photos library) must go with the whole thing.
+        if node.insidePackage { return false }
         let path = node.path
         if path == home { return false }
         let protected = ["/System", "/usr", "/bin", "/sbin", "/private/var/vm", "/private/var/db", home + "/.Trash"]
@@ -661,6 +779,10 @@ final class AppModel: ObservableObject {
         }
         treeVersion += 1
         rebuildChart()
+        if moved > 0 {
+            refreshCategories()
+            hiddenSpace = nil
+        }
         if !failures.isEmpty {
             alertMessage = "Some items couldn't be moved to the Trash.\n\n" + failures.prefix(5).joined(separator: "\n")
                 + "\n\nItems in system folders may need an administrator to remove."
@@ -732,6 +854,7 @@ final class AppModel: ObservableObject {
     /// Drops a removed item (and anything inside it) from every list.
     private func forget(_ node: FileNode) {
         basket.removeAll { $0.isDescendant(of: node) }
+        findResults.removeAll { $0.isDescendant(of: node) }
         ideas.removeAll { $0.node.isDescendant(of: node) }
         untouched.removeAll { $0.node.isDescendant(of: node) }
         for index in duplicateGroups.indices {
@@ -770,6 +893,7 @@ final class AppModel: ObservableObject {
             forget(trash)
             treeVersion += 1
             rebuildChart()
+            refreshCategories()
         }
         ideas.removeAll { isTrashFolder($0.node) }
         volume = VolumeInfo.forPath(scannedRootPath.isEmpty ? "/" : scannedRootPath)

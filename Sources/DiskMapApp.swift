@@ -51,6 +51,9 @@ struct DiskMapApp: App {
                 Button("Full Rescan") { model.fullRescan() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                 Divider()
+                Button("Find Files…") { model.selectedTab = .find }
+                    .keyboardShortcut("f", modifiers: .command)
+                    .disabled(model.phase != .results)
                 Button("Add Selection to Cleanup Basket") {
                     if let node = model.selection { model.addToBasket([node]) }
                 }
