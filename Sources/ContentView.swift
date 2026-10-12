@@ -4,6 +4,7 @@ import QuickLook
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var updater: Updater
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,6 +30,10 @@ struct ContentView: View {
             Text(model.alertMessage ?? "")
         }
         .quickLookPreview($model.previewURL)
+        .sheet(isPresented: $updater.showSheet) {
+            UpdateSheet()
+                .environmentObject(updater)
+        }
         .frame(minWidth: 1060, minHeight: 680)
     }
 
@@ -49,6 +54,7 @@ struct ContentView: View {
 
 struct MainView: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var updater: Updater
 
     var body: some View {
         NavigationSplitView {
@@ -65,6 +71,15 @@ struct MainView: View {
                 .navigationSubtitle(subtitle)
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
+                        if let release = updater.available {
+                            Button {
+                                updater.showAvailable()
+                            } label: {
+                                Label("Update to \(release.version)", systemImage: "arrow.down.circle.fill")
+                                    .labelStyle(.titleAndIcon)
+                            }
+                            .help("A new version of DiskMap is available")
+                        }
                         Menu {
                             Button("Scan \(model.diskName)") { model.scanDisk() }
                             Button("Scan Home Folder") { model.scanHome() }

@@ -128,6 +128,15 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
+                UpdateSettingsView()
+            } header: {
+                Text("Updates")
+            } footer: {
+                Text("DiskMap looks for new versions on GitHub about once a day. Updating downloads the new version, checks it, and reopens DiskMap. Your scans and settings are kept.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 WatchSettingsView()
             } header: {
                 Text("Background checks")

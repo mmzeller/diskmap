@@ -3,6 +3,7 @@ import AppKit
 
 struct WelcomeView: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var updater: Updater
 
     var body: some View {
         ZStack {
@@ -53,9 +54,24 @@ struct WelcomeView: View {
                         }
                     }
 
-                    Text(versionText)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                    HStack(spacing: 10) {
+                        Text(versionText)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        if let release = updater.available {
+                            Button {
+                                updater.showAvailable()
+                            } label: {
+                                Label("Update to \(release.version)", systemImage: "arrow.down.circle.fill")
+                            }
+                            .controlSize(.small)
+                        } else {
+                            Button("Check for Updates") { updater.checkNow() }
+                                .buttonStyle(.link)
+                                .font(.caption)
+                                .disabled(updater.isBusy)
+                        }
+                    }
                 }
                 .padding(44)
                 .frame(maxWidth: .infinity)

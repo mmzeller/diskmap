@@ -54,15 +54,15 @@ You need macOS 13 Ventura or newer and Apple's free developer tools.
 
 ## Update
 
-If you downloaded DiskMap, download the new DiskMap.zip from Releases and replace the app.
+Choose **DiskMap → Check for Updates…**. DiskMap also checks about once a day by itself (turn that off in DiskMap → Settings) and shows an **Update** button in the toolbar and on the start screen when a new version is out. Updating downloads the new version from this repository's releases, checks that it's intact, replaces the app and reopens it.
 
-If you built it yourself:
+This works for copies you built yourself too (version 2.3 or later). To rebuild from source instead:
 
 ```
 bash ~/DiskMap/update.sh
 ```
 
-That gets the latest version from GitHub, rebuilds it and reopens it. Your saved scan, history and settings are kept. macOS may ask for Full Disk Access again after an update, since the rebuilt app counts as a new version.
+That gets the latest code from GitHub, rebuilds it and reopens it. Your saved scan, history and settings are kept. macOS may ask for Full Disk Access again after an update, since the rebuilt app counts as a new version.
 
 ## Using it
 
@@ -87,4 +87,5 @@ That gets the latest version from GitHub, rebuilds it and reopens it. Your saved
 - The background check is a launch agent at `~/Library/LaunchAgents/io.github.mmzeller.DiskMap.watch.plist`. Turning checks off removes it.
 - The uninstaller matches leftovers by the app's identifier (like `com.tinyspeck.slackmacgap`) and, in Application Support, Caches and Logs, by its name. Name matches are labeled so you can check them. Files that belong to another installed app, even one from the same developer, are never included. System-wide items in `/Library` are listed but unticked, since removing them needs an administrator.
 - Quick Clean skips the caches of apps that are open, and never touches Apple's own caches.
+- A new release is published automatically when `VERSION` in `build.sh` changes, so the in-app updater only offers versions that were built and checked on GitHub.
 - Each release is built by GitHub Actions from the code in this repository (see `.github/workflows/build.yml`). Every push to `main` is built too, so a broken build shows up on the Actions tab.

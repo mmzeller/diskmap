@@ -6,10 +6,7 @@
 
 Works on Apple silicon and Intel Macs with macOS 13 Ventura or newer. Built automatically from this repository's code by GitHub Actions.
 
-## What's new in 2.2
+## What's new in 2.3
 
-- **Uninstall Apps** removes an app together with the settings, caches and data it leaves in your Library. Files belonging to another installed app are never included.
-- **Quick Clean** puts routine cleanups in one checklist with sizes: app caches, logs, Xcode build data, Homebrew and npm downloads, opened Mail attachments, device backups, installers in Downloads and data from deleted apps.
-- **Recently Removed** lists everything DiskMap moved to the Trash, with **Put Back**.
-- **Quick Look**: press Space or ⌘Y to preview the selected item.
-- The map can show **rectangles** (a treemap) instead of rings.
+- **Update from inside DiskMap**: choose **DiskMap → Check for Updates…**. DiskMap also checks about once a day on its own and shows an **Update** button when a new version is out. One click downloads it, checks it, and reopens DiskMap on the new version.
+- **Settings → Updates** turns the daily check on or off.

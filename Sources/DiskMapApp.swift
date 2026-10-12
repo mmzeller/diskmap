@@ -30,14 +30,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct DiskMapApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
+    @StateObject private var updater = Updater()
     @AppStorage(WatchKeys.menuBar) private var showMenuBar = false
 
     var body: some Scene {
         WindowGroup("DiskMap", id: "main") {
             ContentView()
                 .environmentObject(model)
+                .environmentObject(updater)
         }
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { updater.checkNow() }
+                    .disabled(updater.isBusy)
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Scan \(model.diskName)") { model.scanDisk() }
                     .keyboardShortcut("1", modifiers: .command)
@@ -84,6 +90,7 @@ struct DiskMapApp: App {
         Settings {
             SettingsView()
                 .environmentObject(model)
+                .environmentObject(updater)
         }
 
         MenuBarExtra(isInserted: $showMenuBar) {
