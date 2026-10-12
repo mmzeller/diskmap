@@ -362,6 +362,13 @@ enum UpdateInstaller {
         guard run("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path]) == 0 else {
             throw Problem(message: "The download is damaged (its signature doesn't match its contents). Nothing was changed.")
         }
+        // Once DiskMap is signed with its own key, only accept updates signed with that same key.
+        let running = Bundle.main.bundleURL
+        if CodeSigning.hasStableIdentity(running), let requirement = CodeSigning.requirement(of: running) {
+            guard CodeSigning.satisfies(newApp, requirement) else {
+                throw Problem(message: "The download isn't signed with DiskMap's signing key, so it wasn't installed. Nothing was changed.")
+            }
+        }
         _ = run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path])
 
         // Swap the new app in where the old one is.

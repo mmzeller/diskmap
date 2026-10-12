@@ -8,7 +8,7 @@ set -uo pipefail
 APP_NAME="DiskMap"
 BUNDLE_ID="io.github.mmzeller.DiskMap"
 VERSION="2.3"
-BUILD_NUMBER="$(date +%Y%m%d.%H%M)"
+BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d.%H%M)}"
 MIN_MACOS="13.0"
 
 cd "$(dirname "$0")"
@@ -119,7 +119,23 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$APP_DIR" >/dev/null 2>&1
+# Sign. With DiskMap's signing key (from GitHub Actions, or "DiskMap Signing" in your keychain),
+# macOS recognizes every version as the same app and keeps its Full Disk Access.
+# Without it, the app is signed ad hoc and each build counts as a new app.
+SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+if [ -z "$SIGN_IDENTITY" ] && security find-identity -p codesigning 2>/dev/null | grep -q '"DiskMap Signing"'; then
+  SIGN_IDENTITY="DiskMap Signing"
+fi
+if [ -n "$SIGN_IDENTITY" ]; then
+  echo "Signing with DiskMap's signing key…"
+  if ! codesign --force --deep --timestamp=none --sign "$SIGN_IDENTITY" ${SIGN_KEYCHAIN:+--keychain "$SIGN_KEYCHAIN"} \
+       --identifier "$BUNDLE_ID" "$APP_DIR"; then
+    red "Signing with the DiskMap Signing key failed."
+    exit 1
+  fi
+else
+  codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$APP_DIR" >/dev/null 2>&1
+fi
 
 if [ "$INSTALL" = 0 ]; then
   bold "Built DiskMap $VERSION (build $BUILD_NUMBER) at $SOURCE_DIR/$APP_DIR"

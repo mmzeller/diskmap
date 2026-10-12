@@ -15,8 +15,17 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
+    env:
+      # Set up once with scripts/setup-signing.sh. Without it, builds are signed ad hoc.
+      HAS_SIGNING_KEY: ${{ secrets.SIGNING_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Load the signing key
+        if: env.HAS_SIGNING_KEY == 'true'
+        env:
+          SIGNING_CERTIFICATE: ${{ secrets.SIGNING_CERTIFICATE }}
+        run: bash scripts/import-signing-key.sh
 
       - name: Show the tools
         run: |
@@ -38,6 +47,15 @@ jobs:
             msg=$(printf '%s' "$line" | cut -d: -f5- | sed -e 's/^ //' -e 's/%/%25/g')
             echo "::error file=${file#"$GITHUB_WORKSPACE/"},line=$row,col=$col::$msg"
           done
+
+      - name: Show how it's signed
+        run: |
+          codesign -dv build/DiskMap.app 2>&1 | grep -E '^(Identifier|Authority|Signature)=' || true
+          if [ "$HAS_SIGNING_KEY" = true ]; then
+            echo "::notice::Signed with DiskMap's signing key"
+          else
+            echo "::warning::Signed ad hoc. Run scripts/setup-signing.sh once so updates keep Full Disk Access."
+          fi
 
       - name: Zip the app
         run: |

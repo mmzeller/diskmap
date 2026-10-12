@@ -64,6 +64,20 @@ bash ~/DiskMap/update.sh
 
 That gets the latest code from GitHub, rebuilds it and reopens it. Your saved scan, history and settings are kept. macOS may ask for Full Disk Access again after an update, since the rebuilt app counts as a new version.
 
+## Keeping Full Disk Access across updates
+
+macOS remembers Full Disk Access by an app's signature. Without a signing key, every build of DiskMap looks like a different app, so the permission has to be turned on again after each update. To fix that once, run this in Terminal:
+
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/mmzeller/diskmap/main/scripts/setup-signing.sh)
+```
+
+It makes a signing key just for DiskMap, copies it to the clipboard and opens the GitHub page where you save it as a secret named `SIGNING_CERTIFICATE`. The key is then deleted from your Mac. Every release after that is signed with it, so after you turn Full Disk Access on for the first signed version, it stays on.
+
+The updater also uses the key: once DiskMap is signed with it, an update is only installed if it carries the same signature.
+
+This is a free, self-made key, not Apple's paid Developer ID, so the first download from the Releases page still needs "Open Anyway". Updates installed from inside DiskMap don't.
+
 ## Using it
 
 - **Map:** click a ring to open a folder, click the center to go back up. The list on the right shows the same folder; double-click a row to open it. Colored dots mean: green safe, teal probably safe, orange check first, purple keep, gray part of macOS. The switch at the top right (or ⌥⌘1 and ⌥⌘2) shows the map as rectangles instead; click a rectangle to open it.
