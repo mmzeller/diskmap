@@ -15,7 +15,7 @@ jobs:
   build:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Show the tools
         run: |
@@ -44,14 +44,14 @@ jobs:
           ditto -c -k --keepParent DiskMap.app DiskMap.zip
           shasum -a 256 DiskMap.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: DiskMap
           path: build/DiskMap.zip
 
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: build/DiskMap.zip
           generate_release_notes: true
