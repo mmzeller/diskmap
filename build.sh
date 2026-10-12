@@ -1,11 +1,13 @@
 #!/bin/bash
 # Builds DiskMap.app from source, puts it in Applications and opens it.
-# Usage:  bash build.sh
+# Usage:  bash build.sh                 build for this Mac and install
+#         bash build.sh --no-install    just build, into build/DiskMap.app
+#         bash build.sh --universal     build for both Apple silicon and Intel Macs
 set -uo pipefail
 
 APP_NAME="DiskMap"
 BUNDLE_ID="io.github.mmzeller.DiskMap"
-VERSION="2.1"
+VERSION="2.2"
 BUILD_NUMBER="$(date +%Y%m%d.%H%M)"
 MIN_MACOS="13.0"
 
@@ -14,6 +16,16 @@ SOURCE_DIR="$(pwd)"
 
 bold() { printf "\n\033[1m%s\033[0m\n" "$1"; }
 red()  { printf "\n\033[1;31m%s\033[0m\n" "$1"; }
+
+INSTALL=1
+UNIVERSAL=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-install) INSTALL=0 ;;
+    --universal) UNIVERSAL=1 ;;
+    *) red "Unknown option: $arg"; exit 1 ;;
+  esac
+done
 
 bold "DiskMap $VERSION (build $BUILD_NUMBER)"
 echo "Building from: $SOURCE_DIR"
@@ -37,24 +49,38 @@ BUILD_DIR="build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
 
 # 2. Compile
-bold "Compiling for $ARCH (this takes a minute)…"
 rm -rf "$BUILD_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
 SOURCES=()
 while IFS= read -r file; do SOURCES+=("$file"); done < <(find Sources -name '*.swift' | sort)
 
-if ! xcrun --sdk macosx swiftc \
-  -O -whole-module-optimization \
-  -swift-version 5 \
-  -parse-as-library \
-  -module-name "$APP_NAME" \
-  -target "${ARCH}-apple-macos${MIN_MACOS}" \
-  "${SOURCES[@]}" \
-  -o "$APP_DIR/Contents/MacOS/$APP_NAME"; then
+compile() {  # $1: arm64 or x86_64, $2: where to put the program
+  xcrun --sdk macosx swiftc \
+    -O -whole-module-optimization \
+    -swift-version 5 \
+    -parse-as-library \
+    -module-name "$APP_NAME" \
+    -target "$1-apple-macos${MIN_MACOS}" \
+    "${SOURCES[@]}" \
+    -o "$2"
+}
+
+build_failed() {
   red "Build failed. Nothing was installed; the DiskMap in Applications is still the old version."
   echo "Copy everything Terminal printed above (from the first line that says 'error') and paste it to Claude."
   exit 1
+}
+
+if [ "$UNIVERSAL" = 1 ]; then
+  bold "Compiling for Apple silicon and Intel (this takes a few minutes)…"
+  compile arm64 "$BUILD_DIR/$APP_NAME-arm64" || build_failed
+  compile x86_64 "$BUILD_DIR/$APP_NAME-x86_64" || build_failed
+  lipo -create -output "$APP_DIR/Contents/MacOS/$APP_NAME" "$BUILD_DIR/$APP_NAME-arm64" "$BUILD_DIR/$APP_NAME-x86_64" || build_failed
+  rm -f "$BUILD_DIR/$APP_NAME-arm64" "$BUILD_DIR/$APP_NAME-x86_64"
+else
+  bold "Compiling for $ARCH (this takes a minute)…"
+  compile "$ARCH" "$APP_DIR/Contents/MacOS/$APP_NAME" || build_failed
 fi
 
 # 3. Bundle
@@ -88,12 +114,17 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>DiskMap asks Finder to empty the Trash when you click Empty Trash.</string>
+    <string>DiskMap asks Finder to show items you reveal and to empty the Trash when you ask it to.</string>
 </dict>
 </plist>
 PLIST
 
 codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$APP_DIR" >/dev/null 2>&1
+
+if [ "$INSTALL" = 0 ]; then
+  bold "Built DiskMap $VERSION (build $BUILD_NUMBER) at $SOURCE_DIR/$APP_DIR"
+  exit 0
+fi
 
 # 4. Quit any copy that's running, so the new one actually opens
 if pgrep -x "$APP_NAME" >/dev/null 2>&1; then

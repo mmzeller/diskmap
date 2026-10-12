@@ -46,11 +46,14 @@ extension AppModel.Tab {
         case .map: return "chart.pie.fill"
         case .categories: return "square.stack.3d.up.fill"
         case .find: return "magnifyingglass"
+        case .quickClean: return "wand.and.stars"
         case .ideas: return "sparkles"
         case .growth: return "chart.line.uptrend.xyaxis"
         case .untouched: return "clock.fill"
         case .duplicates: return "doc.on.doc.fill"
+        case .apps: return "square.grid.2x2.fill"
         case .basket: return "tray.full.fill"
+        case .removed: return "arrow.uturn.backward"
         }
     }
 
@@ -59,11 +62,14 @@ extension AppModel.Tab {
         case .map: return Palette.blue
         case .categories: return Palette.teal
         case .find: return Palette.amber
+        case .quickClean: return Palette.cyan
         case .ideas: return Palette.green
         case .growth: return Palette.orange
         case .untouched: return Palette.indigo
         case .duplicates: return Palette.pink
+        case .apps: return Palette.purple
         case .basket: return Palette.red
+        case .removed: return Palette.graphite
         }
     }
 }
@@ -149,7 +155,10 @@ final class IconCache {
         if node.kind == .smallFiles {
             return NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil) ?? NSImage()
         }
-        let path = node.path
+        return icon(forPath: node.path)
+    }
+
+    func icon(forPath path: String) -> NSImage {
         lock.lock()
         if let hit = cache[path] {
             lock.unlock()
@@ -175,6 +184,37 @@ struct FileIcon: View {
             .interpolation(.high)
             .aspectRatio(contentMode: .fit)
             .frame(width: size, height: size)
+    }
+}
+
+/// Finder's icon for a path that isn't in the scan (an app, a leftover, something in the Trash).
+struct PathIcon: View {
+    let path: String
+    var size: CGFloat = 20
+
+    var body: some View {
+        Image(nsImage: IconCache.shared.icon(forPath: path))
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size, height: size)
+    }
+}
+
+/// A square checkbox drawn as a button, for lists of things to include.
+struct CheckButton: View {
+    let checked: Bool
+    var disabled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: checked ? "checkmark.square.fill" : "square")
+                .font(.system(size: 16))
+                .foregroundColor(checked ? (disabled ? .secondary : .accentColor) : .secondary)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
     }
 }
 
@@ -476,6 +516,12 @@ struct ItemActions: View {
                 }
                 .help("Show in the map")
             }
+            Button {
+                model.preview(node)
+            } label: {
+                Image(systemName: "eye")
+            }
+            .help("Quick Look (⌘Y)")
             Button {
                 model.reveal(node)
             } label: {

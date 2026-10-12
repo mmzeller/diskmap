@@ -11,8 +11,16 @@ struct MapTab: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                 AccessNote()
-                SunburstView()
-                    .padding(18)
+                Group {
+                    if model.mapStyle == .treemap {
+                        TreemapView()
+                            .padding(14)
+                    } else {
+                        SunburstView()
+                            .padding(18)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 DiskSummaryBar()
                     .padding(.horizontal, 18)
                     .padding(.bottom, 14)
@@ -74,6 +82,19 @@ struct BreadcrumbBar: View {
                     }
                 }
             }
+
+            Picker("Map style", selection: $model.mapStyle) {
+                Image(systemName: "chart.pie")
+                    .help("Rings (⌥⌘1)")
+                    .tag(AppModel.MapStyle.rings)
+                Image(systemName: "square.grid.2x2")
+                    .help("Rectangles (⌥⌘2)")
+                    .tag(AppModel.MapStyle.treemap)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Show the map as rings or rectangles")
         }
     }
 }
@@ -280,6 +301,7 @@ struct ItemContextMenu: View {
         if node.isDirectory {
             Button("Open") { model.open(node) }
         }
+        Button("Quick Look") { model.preview(node) }
         Button("Reveal in Finder") { model.reveal(node) }
         Button("Copy Path") { model.copyPath(node) }
         Divider()
@@ -428,6 +450,12 @@ struct DetailContent: View {
                     if node.isDirectory && node !== model.focus {
                         Button("Open") { model.open(node) }
                     }
+                    Button {
+                        model.preview(node)
+                    } label: {
+                        Label("Quick Look", systemImage: "eye")
+                    }
+                    .help("Preview it (Space or ⌘Y)")
                     Button("Reveal in Finder") { model.reveal(node) }
                     Button("Copy Path") { model.copyPath(node) }
                     Spacer()
@@ -450,7 +478,7 @@ struct DetailContent: View {
                         Button {
                             model.requestTrash([node])
                         } label: {
-                            Label("Move to Trash", systemImage: "trash")
+                            Label(model.isInstalledApp(node) ? "Uninstall…" : "Move to Trash", systemImage: "trash")
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.red)

@@ -59,6 +59,26 @@ struct DiskMapApp: App {
                 }
                 .keyboardShortcut("b", modifiers: .command)
             }
+            CommandGroup(after: .toolbar) {
+                Button("Quick Look") { model.previewSelection() }
+                    .keyboardShortcut("y", modifiers: .command)
+                    .disabled(model.selection == nil && model.previewURL == nil)
+                Divider()
+                Button("Show Map as Rings") { model.mapStyle = .rings }
+                    .keyboardShortcut("1", modifiers: [.command, .option])
+                Button("Show Map as Rectangles") { model.mapStyle = .treemap }
+                    .keyboardShortcut("2", modifiers: [.command, .option])
+                Divider()
+                Button("Quick Clean") { model.selectedTab = .quickClean }
+                    .keyboardShortcut("k", modifiers: [.command, .shift])
+                    .disabled(model.phase != .results)
+                Button("Uninstall Apps") { model.selectedTab = .apps }
+                    .keyboardShortcut("u", modifiers: [.command, .shift])
+                    .disabled(model.phase != .results)
+                Button("Recently Removed") { model.selectedTab = .removed }
+                    .keyboardShortcut("z", modifiers: [.command, .option])
+                    .disabled(model.phase != .results)
+            }
         }
 
         Settings {

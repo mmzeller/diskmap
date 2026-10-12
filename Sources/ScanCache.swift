@@ -221,6 +221,15 @@ enum ScanCache {
         }
     }
 
+    /// Forgets removals, after the items were put back.
+    static func unrecordRemovals(_ paths: [String]) {
+        let restored = Set(paths)
+        let list = removedPaths().filter { !restored.contains($0) }
+        if let data = try? JSONEncoder().encode(list) {
+            try? data.write(to: removedURL, options: .atomic)
+        }
+    }
+
     private static func removedPaths() -> [String] {
         guard let data = try? Data(contentsOf: removedURL) else { return [] }
         return (try? JSONDecoder().decode([String].self, from: data)) ?? []

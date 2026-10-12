@@ -1,0 +1,57 @@
+name: Build DiskMap
+
+# Every push to main is compiled, so a broken build shows up here before anyone installs it.
+# Pushing a version tag (v2.2, v2.3…) also attaches a ready-to-run DiskMap.zip to a GitHub release.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the tools
+        run: |
+          sw_vers
+          xcrun swiftc --version
+
+      - name: Build for Apple silicon and Intel
+        shell: bash
+        run: bash build.sh --no-install --universal 2>&1 | tee build.log
+
+      - name: Point at compile errors
+        if: failure()
+        shell: bash
+        run: |
+          grep -E '^[^ ]+\.swift:[0-9]+:[0-9]+: error: ' build.log | sort -u | head -10 | while IFS= read -r line; do
+            file=$(printf '%s' "$line" | cut -d: -f1)
+            row=$(printf '%s' "$line" | cut -d: -f2)
+            col=$(printf '%s' "$line" | cut -d: -f3)
+            msg=$(printf '%s' "$line" | cut -d: -f5- | sed -e 's/^ //' -e 's/%/%25/g')
+            echo "::error file=${file#"$GITHUB_WORKSPACE/"},line=$row,col=$col::$msg"
+          done
+
+      - name: Zip the app
+        run: |
+          cd build
+          ditto -c -k --keepParent DiskMap.app DiskMap.zip
+          shasum -a 256 DiskMap.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DiskMap
+          path: build/DiskMap.zip
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/DiskMap.zip
+          generate_release_notes: true

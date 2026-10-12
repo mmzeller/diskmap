@@ -80,11 +80,14 @@ final class AppModel: ObservableObject {
         case map = "Map"
         case categories = "Categories"
         case find = "Find"
+        case quickClean = "Quick Clean"
         case ideas = "Cleanup Ideas"
         case growth = "What Grew"
         case untouched = "Big & Untouched"
         case duplicates = "Duplicates"
+        case apps = "Uninstall Apps"
         case basket = "Cleanup Basket"
+        case removed = "Recently Removed"
 
         var id: String { rawValue }
     }
@@ -95,7 +98,17 @@ final class AppModel: ObservableObject {
         case finished
     }
 
+    enum MapStyle: String {
+        case rings
+        case treemap
+    }
+
     @Published var phase: Phase = .welcome
+    @Published var mapStyle: MapStyle = MapStyle(rawValue: UserDefaults.standard.string(forKey: "mapStyle") ?? "") ?? .rings {
+        didSet { UserDefaults.standard.set(mapStyle.rawValue, forKey: "mapStyle") }
+    }
+    /// The file shown in Quick Look; nil when the preview is closed.
+    @Published var previewURL: URL?
     /// Sidebar selection. Optional because a sidebar list can be deselected; nil shows the map.
     @Published var selectedTab: Tab? = .map
     @Published private(set) var root: FileNode?
@@ -173,6 +186,33 @@ final class AppModel: ObservableObject {
     @Published private(set) var findBusy = false
     private var searchTask: Task<Void, Never>?
 
+    // Recently removed, newest first, for Put Back.
+    @Published private(set) var removals: [RemovalRecord] = Removals.load()
+
+    // Quick Clean
+    @Published private(set) var cleanItems: [CleanItem] = []
+    @Published private(set) var cleanChosen: Set<String> = []
+    /// Individual entries you unticked inside a cleanup line.
+    @Published private(set) var cleanExcluded: Set<String> = []
+    @Published private(set) var cleanBusy = false
+    @Published var cleanEmptyTrash = false
+    @Published private(set) var trashBytes: Int64 = 0
+    @Published var showCleanConfirm = false
+    private var cleanLoaded = false
+    private var cleanKnown: Set<String> = []
+
+    // Uninstall apps
+    @Published private(set) var apps: [InstalledApp] = []
+    @Published private(set) var appsBusy = false
+    private var appsLoaded = false
+    /// The app in the uninstall sheet; setting it to nil closes the sheet.
+    @Published var uninstallTarget: InstalledApp?
+    @Published private(set) var uninstallLeftovers: [Leftover] = []
+    @Published private(set) var uninstallChosen: Set<String> = []
+    @Published private(set) var uninstallSearching = false
+    @Published private(set) var uninstallAppRunning = false
+    @Published private(set) var uninstallNote: String?
+
     // Cleanup basket: items collected from anywhere, trashed together. Remembered by path across launches.
     @Published private(set) var basket: [FileNode] = [] {
         didSet { UserDefaults.standard.set(basket.map { $0.path }, forKey: "basketPaths") }
@@ -192,6 +232,7 @@ final class AppModel: ObservableObject {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
 
     private var scanner: DiskScanner?
+    private var keyMonitor: Any?
     private var pollTask: Task<Void, Never>?
     private var duplicateProgress: DuplicateProgress?
     private var untouchedGeneration = 0
@@ -204,6 +245,7 @@ final class AppModel: ObservableObject {
         if cachedScan != nil {
             openLastScan()
         }
+        installKeyMonitor()
 
         // A click on a "your disk grew" notification: reload the freshly checked scan and show What Grew.
         _ = NotificationCenter.default.addObserver(forName: .diskMapShowGrowth, object: nil, queue: .main) { [weak self] _ in
@@ -261,7 +303,8 @@ final class AppModel: ObservableObject {
 
     func badgeCount(for tab: Tab) -> Int {
         switch tab {
-        case .map, .categories, .find: return 0
+        case .map, .categories, .find, .apps, .removed: return 0
+        case .quickClean: return 0
         case .ideas: return ideas.count
         case .growth: return growth?.items.count ?? 0
         case .untouched: return untouched.count
@@ -634,10 +677,12 @@ final class AppModel: ObservableObject {
     /// Shows the item selected in a Finder window and brings Finder to the front.
     /// Tries three ways in turn and reports what happened, so a failure is never silent.
     func reveal(_ node: FileNode) {
-        let path = node.path
-        let opensFolder = node.kind == .smallFiles
+        reveal(path: node.path, name: node.name, opensFolder: node.kind == .smallFiles)
+    }
+
+    func reveal(path: String, name: String, opensFolder: Bool = false) {
         guard FileManager.default.fileExists(atPath: path) else {
-            alertMessage = "“\(node.name)” isn't there anymore. It may have been moved or deleted since the scan. Rescan to update the map."
+            alertMessage = "“\(name)” isn't there anymore. It may have been moved or deleted since the scan. Rescan to update the map."
             return
         }
 
@@ -665,7 +710,7 @@ final class AppModel: ObservableObject {
         if let script = NSAppleScript(source: source) {
             _ = script.executeAndReturnError(&scriptError)
             if scriptError == nil {
-                showStatus("Showing “\(node.name)” in Finder.")
+                showStatus("Showing “\(name)” in Finder.")
                 return
             }
             let message = scriptError?[NSAppleScript.errorMessage] as? String ?? "unknown error"
@@ -682,7 +727,7 @@ final class AppModel: ObservableObject {
             process.waitUntilExit()
             if process.terminationStatus == 0 {
                 activateFinder()
-                showStatus("Showing “\(node.name)” in Finder.")
+                showStatus("Showing “\(name)” in Finder.")
                 return
             }
             problems.append("open -R exited with status \(process.terminationStatus)")
@@ -696,12 +741,12 @@ final class AppModel: ObservableObject {
             : NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
         if worked {
             activateFinder()
-            showStatus("Showing “\(node.name)” in Finder.")
+            showStatus("Showing “\(name)” in Finder.")
             return
         }
         problems.append("NSWorkspace refused")
 
-        alertMessage = "Finder couldn't show “\(node.name)”.\n\nLocation: \(path)\n\nDetails for Claude:\n" + problems.joined(separator: "\n")
+        alertMessage = "Finder couldn't show “\(name)”.\n\nLocation: \(path)\n\nDetails for Claude:\n" + problems.joined(separator: "\n")
     }
 
     private func activateFinder() {
@@ -740,9 +785,20 @@ final class AppModel: ObservableObject {
         return true
     }
 
+    /// An app in Applications, which DiskMap removes with the uninstaller.
+    func isInstalledApp(_ node: FileNode) -> Bool {
+        node.isPackage && AppCatalog.isInstalledLocation(node.path, home: home)
+    }
+
     func requestTrash(_ nodes: [FileNode]) {
         let allowed = nodes.filter { canTrash($0) }
         guard !allowed.isEmpty else { return }
+        // A single installed app goes through the uninstaller, so its leftovers can go too.
+        if allowed.count == 1, let node = allowed.first, isInstalledApp(node),
+           let app = AppCatalog.describe(path: node.path, bytes: node.size) {
+            beginUninstall(app)
+            return
+        }
         pendingTrash = allowed
         showTrashConfirm = true
     }
@@ -759,36 +815,474 @@ final class AppModel: ObservableObject {
     func confirmTrash() {
         let nodes = pendingTrash
         pendingTrash = []
+        let targets = nodes.map { RemovalTarget(path: $0.path, name: $0.name, bytes: $0.size) }
+        let outcome = remove(targets, reason: "Moved to Trash")
+        if !outcome.failures.isEmpty {
+            alertMessage = "Some items couldn't be moved to the Trash.\n\n" + outcome.failures.prefix(5).joined(separator: "\n")
+                + "\n\nItems in system folders may need an administrator to remove."
+        } else if outcome.moved > 0 {
+            showStatus("Moved \(Fmt.bytes(outcome.moved)) to the Trash. You can put it back from Recently Removed.")
+        }
+    }
+
+    /// The one way DiskMap removes things: move each to the Trash, remember it for Put Back,
+    /// take it out of the tree and every list, and keep the saved scan in step.
+    @discardableResult
+    func remove(_ targets: [RemovalTarget], reason: String) -> (moved: Int64, failures: [String]) {
         var moved: Int64 = 0
         var failures: [String] = []
         var removedPaths: [String] = []
-        for node in nodes {
+        var records: [RemovalRecord] = []
+        let batch = UUID()
+        for target in targets {
             do {
-                let path = node.path
-                try FileManager.default.trashItem(at: node.url, resultingItemURL: nil)
-                moved += node.size
-                removedPaths.append(path)
-                node.detach()
-                forget(node)
+                let record = try Removals.trash(target, reason: reason, batch: batch)
+                records.append(record)
+                moved += target.bytes
+                removedPaths.append(target.path)
+                if let current = root, let node = ScanCache.find(target.path, in: current), node !== current {
+                    node.detach()
+                    forget(node)
+                }
             } catch {
-                failures.append("\(node.name): \(error.localizedDescription)")
+                failures.append("\(target.name): \(error.localizedDescription)")
             }
+        }
+        if !records.isEmpty {
+            removals = Array(records.reversed()) + removals
+            Removals.save(removals)
         }
         if showingSavedScan {
             ScanCache.recordRemoval(removedPaths)
         }
-        treeVersion += 1
-        rebuildChart()
         if moved > 0 {
+            treeVersion += 1
+            rebuildChart()
             refreshCategories()
             hiddenSpace = nil
         }
-        if !failures.isEmpty {
-            alertMessage = "Some items couldn't be moved to the Trash.\n\n" + failures.prefix(5).joined(separator: "\n")
-                + "\n\nItems in system folders may need an administrator to remove."
-        } else if moved > 0 {
-            showStatus("Moved \(Fmt.bytes(moved)) to the Trash. Empty the Trash to get the space back.")
+        return (moved, failures)
+    }
+
+    // MARK: - Quick Look
+
+    func preview(_ node: FileNode) {
+        preview(path: node.path)
+    }
+
+    func preview(path: String) {
+        guard FileManager.default.fileExists(atPath: path) else {
+            alertMessage = "“\((path as NSString).lastPathComponent)” isn't there anymore. Rescan to update the map."
+            return
         }
+        previewURL = URL(fileURLWithPath: path)
+    }
+
+    /// ⌘Y and Space: preview the selected item, or close the preview if it's open.
+    func previewSelection() {
+        if previewURL != nil {
+            previewURL = nil
+        } else if let node = selection {
+            preview(node)
+        }
+    }
+
+    /// Space previews the selection, as in Finder, except while typing in a text field.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // Key events arrive on the main thread; newer compilers want that stated.
+            #if compiler(>=5.9)
+            let handled = MainActor.assumeIsolated { self?.handleSpace(event) ?? false }
+            #else
+            let handled = self?.handleSpace(event) ?? false
+            #endif
+            return handled ? nil : event
+        }
+    }
+
+    private func handleSpace(_ event: NSEvent) -> Bool {
+        guard event.keyCode == 49 else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers.isEmpty else { return false }
+        if previewURL != nil {
+            previewURL = nil
+            return true
+        }
+        guard phase == .results, tab == .map, selection != nil,
+              let window = NSApp.keyWindow, window.attachedSheet == nil, window.isVisible else { return false }
+        // Typing a space in a search field or text box stays a space.
+        if window.firstResponder is NSText { return false }
+        previewSelection()
+        return true
+    }
+
+    // MARK: - Quick Clean
+
+    func loadCleanIfNeeded() {
+        if !cleanLoaded { surveyClean() }
+    }
+
+    func surveyClean() {
+        guard !cleanBusy else { return }
+        cleanBusy = true
+        cleanLoaded = true
+        let homePath = home
+        let running = RunningSnapshot.now()
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { () -> CleanSurvey in
+                CleanSurvey(items: QuickClean.survey(home: homePath, running: running),
+                            trash: Removals.diskUsage(of: homePath + "/.Trash"))
+            }.value
+            guard let self = self else { return }
+            // Keep your ticks across checks; anything new starts at its default.
+            let known = self.cleanKnown
+            var chosen = self.cleanChosen
+            for item in result.items where !known.contains(item.id) && item.defaultOn {
+                chosen.insert(item.id)
+            }
+            self.cleanKnown = known.union(result.items.map { $0.id })
+            self.cleanItems = result.items
+            self.cleanChosen = chosen
+            let paths = Set(result.items.flatMap { $0.entries.map { $0.path } })
+            self.cleanExcluded = self.cleanExcluded.intersection(paths)
+            self.trashBytes = result.trash
+            self.cleanBusy = false
+        }
+    }
+
+    func toggleClean(_ id: String) {
+        if cleanChosen.contains(id) {
+            cleanChosen.remove(id)
+        } else {
+            cleanChosen.insert(id)
+        }
+    }
+
+    func toggleCleanEntry(_ entry: CleanEntry) {
+        if cleanExcluded.contains(entry.path) {
+            cleanExcluded.remove(entry.path)
+        } else {
+            cleanExcluded.insert(entry.path)
+        }
+    }
+
+    /// What a cleanup line would remove, leaving out anything you unticked.
+    func cleanEntries(_ item: CleanItem) -> [CleanEntry] {
+        item.entries.filter { !cleanExcluded.contains($0.path) }
+    }
+
+    func cleanBytes(_ item: CleanItem) -> Int64 {
+        var total: Int64 = 0
+        for entry in cleanEntries(item) { total += entry.bytes }
+        return total
+    }
+
+    var cleanTotal: Int64 {
+        var total: Int64 = 0
+        for item in cleanItems where cleanChosen.contains(item.id) {
+            total += cleanBytes(item)
+        }
+        return total
+    }
+
+    var cleanSummary: String {
+        let total = Fmt.bytes(cleanTotal)
+        if cleanEmptyTrash {
+            return "\(total) will be moved to the Trash, and then the Trash will be emptied. That can't be undone."
+        }
+        return "\(total) will be moved to the Trash. Recently Removed can put any of it back until you empty the Trash."
+    }
+
+    func runQuickClean() {
+        var targets: [RemovalTarget] = []
+        for item in cleanItems where cleanChosen.contains(item.id) {
+            for entry in cleanEntries(item) {
+                targets.append(RemovalTarget(path: entry.path, name: entry.name, bytes: entry.bytes))
+            }
+        }
+        let outcome = remove(targets, reason: "Quick Clean")
+        if cleanEmptyTrash {
+            emptyTrash()
+        }
+        if !outcome.failures.isEmpty {
+            alertMessage = "Some items couldn't be moved to the Trash, usually because an app was using them.\n\n"
+                + outcome.failures.prefix(6).joined(separator: "\n")
+        } else if outcome.moved > 0 {
+            showStatus(cleanEmptyTrash
+                       ? "Cleaned up \(Fmt.bytes(outcome.moved)) and emptied the Trash."
+                       : "Moved \(Fmt.bytes(outcome.moved)) to the Trash. Empty the Trash to free the space.")
+        }
+        surveyClean()
+    }
+
+    // MARK: - Uninstall apps
+
+    func loadAppsIfNeeded() {
+        if !appsLoaded { refreshApps() }
+    }
+
+    func refreshApps() {
+        guard !appsBusy else { return }
+        appsBusy = true
+        appsLoaded = true
+        let homePath = home
+        let current = root
+        Task { [weak self] in
+            let listed = await Task.detached(priority: .userInitiated) { () -> [InstalledApp] in
+                AppCatalog.list(home: homePath) { path in
+                    guard let tree = current, let node = ScanCache.find(path, in: tree) else { return nil }
+                    return node.size
+                }
+            }.value
+            guard let self = self else { return }
+            self.apps = listed
+            let unmeasured = listed.filter { !$0.isMeasured }.map { $0.path }
+            if !unmeasured.isEmpty {
+                let sizes = await Task.detached(priority: .utility) { () -> [String: Int64] in
+                    Removals.diskUsage(ofEach: unmeasured)
+                }.value
+                for index in self.apps.indices {
+                    if let size = sizes[self.apps[index].path] {
+                        self.apps[index].bytes = size
+                    }
+                }
+            }
+            self.appsBusy = false
+        }
+    }
+
+    /// Opens the uninstall sheet and looks for what the app left behind.
+    func beginUninstall(_ app: InstalledApp) {
+        guard !app.isProtected else {
+            alertMessage = "\(app.name) comes with macOS, so it can't be removed."
+            return
+        }
+        uninstallTarget = app
+        uninstallLeftovers = []
+        uninstallChosen = []
+        uninstallNote = nil
+        uninstallSearching = true
+        uninstallAppRunning = RunningApps.isRunning(app)
+        let homePath = home
+        let known = apps
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { () -> UninstallSearch in
+                var target = app
+                if !target.isMeasured {
+                    target.bytes = Removals.diskUsage(of: app.path)
+                }
+                let everyApp = known.isEmpty ? AppCatalog.list(home: homePath, sizeFromScan: { _ in 0 }) : known
+                let others = everyApp.filter { $0.path != app.path }
+                var note: String?
+                if app.bundleID == nil {
+                    note = "This app doesn't say who it is, so DiskMap can only remove the app itself."
+                } else if others.contains(where: { $0.bundleID?.lowercased() == app.bundleID?.lowercased() }) {
+                    note = "Another copy of \(app.name) is installed, so its settings and data are kept."
+                }
+                var leftovers = LeftoverFinder.find(for: app, others: others, home: homePath)
+                for index in leftovers.indices {
+                    leftovers[index].bytes = Removals.diskUsage(of: leftovers[index].path)
+                }
+                leftovers.sort { $0.bytes > $1.bytes }
+                return UninstallSearch(app: target, leftovers: leftovers, note: note)
+            }.value
+            guard let self = self, self.uninstallTarget?.path == app.path else { return }
+            self.uninstallTarget = result.app
+            self.uninstallLeftovers = result.leftovers
+            self.uninstallChosen = Set(result.leftovers.filter { !$0.systemWide }.map { $0.path })
+            self.uninstallNote = result.note
+            self.uninstallSearching = false
+        }
+    }
+
+    func toggleLeftover(_ leftover: Leftover) {
+        if uninstallChosen.contains(leftover.path) {
+            uninstallChosen.remove(leftover.path)
+        } else {
+            uninstallChosen.insert(leftover.path)
+        }
+    }
+
+    var uninstallTotal: Int64 {
+        var total = max(uninstallTarget?.bytes ?? 0, 0)
+        for leftover in uninstallLeftovers where uninstallChosen.contains(leftover.path) {
+            total += max(leftover.bytes, 0)
+        }
+        return total
+    }
+
+    func quitAppForUninstall() {
+        guard let app = uninstallTarget else { return }
+        RunningApps.quit(app)
+        Task { [weak self] in
+            for _ in 0..<24 {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                if !RunningApps.isRunning(app) { break }
+            }
+            self?.uninstallAppRunning = RunningApps.isRunning(app)
+        }
+    }
+
+    func cancelUninstall() {
+        uninstallTarget = nil
+    }
+
+    func confirmUninstall() {
+        guard let app = uninstallTarget else { return }
+        if RunningApps.isRunning(app) {
+            uninstallAppRunning = true
+            return
+        }
+        var targets = [RemovalTarget(path: app.path, name: (app.path as NSString).lastPathComponent, bytes: max(app.bytes, 0))]
+        for leftover in uninstallLeftovers where uninstallChosen.contains(leftover.path) {
+            targets.append(RemovalTarget(path: leftover.path, name: leftover.name, bytes: max(leftover.bytes, 0)))
+        }
+        uninstallTarget = nil
+        let outcome = remove(targets, reason: "Uninstalled \(app.name)")
+        if !FileManager.default.fileExists(atPath: app.path) {
+            apps.removeAll { $0.path == app.path }
+        }
+        if !outcome.failures.isEmpty {
+            let message = "Some of \(app.name)'s files couldn't be moved to the Trash.\n\n"
+                + outcome.failures.prefix(6).joined(separator: "\n")
+                + "\n\nSystem-wide items usually need an administrator. You can remove them in Finder, which will ask for your password."
+            // Let the sheet close before the alert appears.
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                self?.alertMessage = message
+            }
+        } else if outcome.moved > 0 {
+            showStatus("Uninstalled \(app.name), freeing \(Fmt.bytes(outcome.moved)). Recently Removed can put it back.")
+        }
+    }
+
+    // MARK: - Put Back
+
+    /// Moves an item back from the Trash and adds it to the map again.
+    func putBack(_ record: RemovalRecord) {
+        putBack([record])
+    }
+
+    /// Moves items back from the Trash to where they were and adds them to the map again.
+    func putBack(_ records: [RemovalRecord]) {
+        var problems: [String] = []
+        var restored: [RemovalRecord] = []
+        for record in records where record.canPutBack {
+            if let problem = Removals.putBack(record) {
+                problems.append(problem)
+                continue
+            }
+            if let index = removals.firstIndex(where: { $0.id == record.id }) {
+                removals[index].restored = true
+            }
+            restored.append(record)
+        }
+        if !restored.isEmpty {
+            Removals.save(removals)
+            let paths = restored.map { $0.originalPath }
+            ScanCache.unrecordRemovals(paths)
+            restoreInMap(paths)
+            // Lists that read the disk directly look again next time they're opened.
+            appsLoaded = false
+            cleanLoaded = false
+            if tab == .apps { refreshApps() }
+            if tab == .quickClean { surveyClean() }
+            if restored.count == 1, let only = restored.first {
+                showStatus("Put “\(only.name)” back where it was.")
+            } else {
+                showStatus("Put \(restored.count) items back where they were.")
+            }
+        }
+        if !problems.isEmpty {
+            alertMessage = problems.prefix(6).joined(separator: "\n\n")
+        }
+    }
+
+    /// Adds things that are back on disk to the map without a full rescan.
+    /// Folders are measured off the main thread; files are picked up by re-listing their folder.
+    private func restoreInMap(_ paths: [String]) {
+        guard let current = root else { return }
+        var folderJobs: [(parent: FileNode, path: String, name: String)] = []
+        var fileParents: [FileNode] = []
+        let fm = FileManager.default
+
+        for restoredPath in paths {
+            // The deepest folder still in the map above the item's location.
+            var folderPath = (restoredPath as NSString).deletingLastPathComponent
+            var folder = ScanCache.find(folderPath, in: current)
+            while folder == nil && folderPath.count > 1 {
+                folderPath = (folderPath as NSString).deletingLastPathComponent
+                folder = ScanCache.find(folderPath, in: current)
+            }
+            guard let parent = folder, parent.isDirectory else { continue }
+
+            // The item itself, or the folder that holds it if its folder was removed too.
+            let base = parent.path
+            let remainder = restoredPath.dropFirst(base == "/" ? 1 : base.count + 1)
+            guard let first = remainder.split(separator: "/").first else { continue }
+            let childName = String(first)
+            let childPath = base == "/" ? "/" + childName : base + "/" + childName
+            var isFolder: ObjCBool = false
+            guard fm.fileExists(atPath: childPath, isDirectory: &isFolder) else { continue }
+            if parent.children.contains(where: { $0.kind != .smallFiles && $0.name == childName }) { continue }
+
+            if isFolder.boolValue {
+                if !folderJobs.contains(where: { $0.path == childPath }) {
+                    folderJobs.append((parent: parent, path: childPath, name: childName))
+                }
+            } else if !fileParents.contains(where: { $0 === parent }) {
+                fileParents.append(parent)
+            }
+        }
+        guard !folderJobs.isEmpty || !fileParents.isEmpty else { return }
+
+        let jobs = folderJobs.map { [$0.path, $0.name] }
+        Task { [weak self] in
+            let scanned = await Task.detached(priority: .userInitiated) { () -> [LoadedScan] in
+                jobs.map { job in
+                    let node = DiskScanner().scan(rootPath: job[0], displayName: job[1])
+                    node.rootPath = nil
+                    return LoadedScan(root: node, previous: nil)
+                }
+            }.value
+            guard let self = self, self.root === current else { return }
+            for (index, job) in folderJobs.enumerated() {
+                let parent = job.parent
+                if parent.children.contains(where: { $0.kind == .directory && $0.name == job.name }) { continue }
+                let fresh = scanned[index].root
+                fresh.parent = parent
+                parent.children.append(fresh)
+                var ancestor: FileNode? = parent
+                while let node = ancestor {
+                    node.size += fresh.size
+                    node.itemCount += fresh.itemCount
+                    node.children.sort { $0.size > $1.size }
+                    ancestor = node.parent
+                }
+            }
+            // Files last, so the folders just added are kept rather than read again.
+            for parent in fileParents {
+                DiskScanner().refresh(parent, deep: false)
+            }
+            self.afterTreeChange()
+        }
+    }
+
+    /// Refreshes everything that's computed from the tree.
+    private func afterTreeChange() {
+        treeVersion += 1
+        rebuildChart()
+        refreshCategories()
+        hiddenSpace = nil
+        if let top = root {
+            ideas = IdeaFinder.find(root: top, explainer: explainer)
+        }
+    }
+
+    func clearRemovalHistory() {
+        removals = []
+        Removals.save([])
     }
 
     // MARK: - Cleanup basket
@@ -882,6 +1376,7 @@ final class AppModel: ObservableObject {
             alertMessage = "Couldn't empty the Trash (\(reason)). You can empty it from the Trash icon in the Dock instead."
             return
         }
+        trashBytes = 0
         if let trash = root.flatMap({ findNode(path: home + "/.Trash", in: $0) }) {
             for child in trash.children {
                 child.detach()

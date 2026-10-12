@@ -13,10 +13,23 @@ A free disk-space map for your Mac, in the spirit of DaisyDisk, with a few thing
 - **System & hidden, explained.** The space a scan can't see is broken down into swap, startup files and snapshots, with an option to remove local Time Machine snapshots.
 - **Big & Untouched.** Large files you haven't opened in months (uses Spotlight's "last opened" date).
 - **Duplicates.** Finds identical files by comparing their actual contents.
+- **Uninstall Apps.** Removes an app together with the settings, caches and data it leaves in your Library, like AppCleaner. Trashing an app from anywhere in DiskMap opens the uninstaller too.
+- **Quick Clean.** One checklist of routine cleanups (app caches, logs, Xcode build data, Homebrew and npm downloads, opened Mail attachments, old device backups, installers in Downloads, data from deleted apps) with sizes and a total.
+- **Recently Removed.** Everything DiskMap moved to the Trash, with Put Back while it's still there.
+- **Quick Look and rectangles.** Press Space or ⌘Y to preview the selected item. The map can show nested rectangles (a treemap) instead of rings.
 
 Everything you delete goes to the Trash, so you can change your mind until you empty it.
 
-## Install
+## Download (easiest)
+
+1. Go to [Releases](https://github.com/mmzeller/diskmap/releases/latest) and download **DiskMap.zip**.
+2. Double-click it, then drag **DiskMap** into your Applications folder.
+3. The first time you open it, macOS says it can't check the app for malicious software, because DiskMap isn't signed with a paid Apple developer certificate. Click **Done**, then open **System Settings → Privacy & Security**, scroll down to the message about DiskMap and click **Open Anyway**. You only do this once per version.
+4. Turn on Full Disk Access (step 3 below).
+
+The download works on both Apple silicon and Intel Macs running macOS 13 or newer.
+
+## Build it yourself
 
 You need macOS 13 Ventura or newer and Apple's free developer tools.
 
@@ -41,6 +54,10 @@ You need macOS 13 Ventura or newer and Apple's free developer tools.
 
 ## Update
 
+If you downloaded DiskMap, download the new DiskMap.zip from Releases and replace the app.
+
+If you built it yourself:
+
 ```
 bash ~/DiskMap/update.sh
 ```
@@ -49,11 +66,15 @@ That gets the latest version from GitHub, rebuilds it and reopens it. Your saved
 
 ## Using it
 
-- **Map:** click a ring to open a folder, click the center to go back up. The list on the right shows the same folder; double-click a row to open it. Colored dots mean: green safe, teal probably safe, orange check first, purple keep, gray part of macOS.
+- **Map:** click a ring to open a folder, click the center to go back up. The list on the right shows the same folder; double-click a row to open it. Colored dots mean: green safe, teal probably safe, orange check first, purple keep, gray part of macOS. The switch at the top right (or ⌥⌘1 and ⌥⌘2) shows the map as rectangles instead; click a rectangle to open it.
+- **Quick Look:** select an item and press Space or ⌘Y, or use the eye button in any list.
+- **Uninstall Apps:** lists your apps by size or by when you last opened them. Uninstall shows everything that goes with the app; untick anything you want to keep. If the app is open, DiskMap offers to quit it first. Apps that come with macOS can't be removed.
+- **Quick Clean:** tick the cleanups you want and click Clean Up. The arrow on each line shows exactly what's included, and you can untick single items. Moving things to the Trash doesn't free space until the Trash is emptied; tick "Empty the Trash when done" to do both at once.
+- **Recently Removed:** Put Back returns an item (or a whole cleanup) to where it was, as long as it's still in the Trash.
 - **Cleanup Basket:** drag rows onto Cleanup Basket in the sidebar, click the tray button next to an item, or press ⌘B. Then open the basket and click Move All to Trash.
 - **Background checks:** turn them on from What Grew or DiskMap → Settings. Checks run around 12:40 pm (daily, or Mondays for weekly) even when DiskMap isn't open; if the Mac is asleep, they run when it wakes. You're notified once each time growth since your last scan passes another multiple of your limit (5 GB, then 10 GB, and so on). Clicking the notification opens What Grew.
 - **Menu bar:** optional, in the same settings. With it on, closing the window leaves DiskMap in the menu bar.
-- **Keyboard:** ⌘1 scan the whole disk, ⌘2 scan your home folder, ⌘O choose a folder, ⌘R quick rescan, ⇧⌘R full rescan, ⌘F find, ⌘B add to basket, Delete moves the selected item to the Trash, Esc goes up a level.
+- **Keyboard:** ⌘1 scan the whole disk, ⌘2 scan your home folder, ⌘O choose a folder, ⌘R quick rescan, ⇧⌘R full rescan, ⌘F find, ⌘B add to basket, Space or ⌘Y Quick Look, ⇧⌘K Quick Clean, ⇧⌘U Uninstall Apps, ⌥⌘Z Recently Removed, Delete moves the selected item to the Trash, Esc goes up a level.
 - **System & hidden** on a whole-disk scan is space DiskMap can't see as files. Click "What's in System & hidden?" under the map for the breakdown: swap and sleep image, startup and recovery files, and local snapshots plus folders DiskMap can't read. Removing local Time Machine snapshots asks for your password and doesn't touch backups on your Time Machine disk.
 
 ## Notes
@@ -64,3 +85,6 @@ That gets the latest version from GitHub, rebuilds it and reopens it. Your saved
 - DiskMap reopens your most recent scan when it starts. The saved scan, the snapshots for What Grew and the size history are kept in `~/Library/Application Support/DiskMap`.
 - Quick rescans fall back to a full scan when macOS's change log can't cover the whole period (for example after it was reset).
 - The background check is a launch agent at `~/Library/LaunchAgents/io.github.mmzeller.DiskMap.watch.plist`. Turning checks off removes it.
+- The uninstaller matches leftovers by the app's identifier (like `com.tinyspeck.slackmacgap`) and, in Application Support, Caches and Logs, by its name. Name matches are labeled so you can check them. Files that belong to another installed app, even one from the same developer, are never included. System-wide items in `/Library` are listed but unticked, since removing them needs an administrator.
+- Quick Clean skips the caches of apps that are open, and never touches Apple's own caches.
+- Each release is built by GitHub Actions from the code in this repository (see `.github/workflows/build.yml`). Every push to `main` is built too, so a broken build shows up on the Actions tab.

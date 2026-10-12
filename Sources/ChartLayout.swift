@@ -110,6 +110,26 @@ enum SunburstGeometry {
         Color(hue: normalized(hue), saturation: 0.66, brightness: 0.88)
     }
 
+    /// Treemap tiles use the same palette as the rings, a little softer because tiles are large.
+    static func tileColor(hue: Double, depth: Int, kind: FileNode.Kind, highlighted: Bool, lift: Double = 0) -> Color {
+        if kind == .smallFiles {
+            return Color(white: min(1, (highlighted ? 0.72 : 0.62) + lift))
+        }
+        var saturation = depth == 1 ? 0.62 : 0.50
+        var brightness = depth == 1 ? 0.80 : 0.88
+        if kind == .file {
+            saturation -= 0.24
+            brightness += 0.02
+        }
+        if highlighted {
+            saturation = min(1, saturation + 0.12)
+            brightness = min(1, brightness + 0.06)
+        }
+        saturation = max(0, saturation - lift * 0.6)
+        brightness = min(1, brightness + lift)
+        return Color(hue: normalized(hue), saturation: saturation, brightness: brightness)
+    }
+
     private enum WedgeState {
         case normal
         case highlighted
@@ -185,5 +205,168 @@ enum SunburstGeometry {
         if angle < 0 { angle += 2 * Double.pi }
         if angle >= 2 * Double.pi { angle -= 2 * Double.pi }
         return segments.first { $0.depth == depth && angle >= $0.start && angle < $0.end }
+    }
+}
+
+// MARK: - Treemap
+
+/// One rectangle of the treemap.
+struct TreemapCell {
+    let node: FileNode
+    let rect: CGRect
+    /// 1 for items in the open folder, 2 for what's inside those.
+    let depth: Int
+    let hue: Double
+    /// True for a folder whose contents are drawn inside it; only its top strip shows.
+    let hasChildren: Bool
+    /// For the tile that stands for many items too small to draw: how many. `node` is then their folder.
+    var restCount = 0
+}
+
+enum TreemapLayout {
+    /// Most items drawn per folder; the rest share one tile.
+    static let maxItems = 250
+    static let maxInnerItems = 60
+    /// Height of the label strip along the top of a folder that shows its contents.
+    static let header: CGFloat = 17
+    static let gap: CGFloat = 2
+
+    /// Lays out the open folder's items, and inside the bigger folders, their items too.
+    static func cells(for focus: FileNode, in bounds: CGRect) -> [TreemapCell] {
+        var result: [TreemapCell] = []
+        guard focus.size > 0, bounds.width > 4, bounds.height > 4 else { return result }
+        let items = visibleChildren(of: focus, limit: maxItems)
+        let (rects, restRect) = layout(items, total: focus.size, in: bounds)
+        var cursor: Int64 = 0
+        var inner: [TreemapCell] = []
+        for (child, rect) in zip(items, rects) {
+            let middle = (Double(cursor) + Double(child.size) / 2) / Double(focus.size)
+            cursor += child.size
+            let tile = rect.insetBy(dx: gap / 2, dy: gap / 2)
+            guard tile.width >= 1, tile.height >= 1 else { continue }
+            let room = CGRect(x: tile.minX + gap, y: tile.minY + header, width: tile.width - gap * 2, height: tile.height - header - gap)
+            let showInside = child.isDirectory && !child.children.isEmpty && room.width >= 40 && room.height >= 24
+            result.append(TreemapCell(node: child, rect: tile, depth: 1, hue: middle, hasChildren: showInside))
+            guard showInside else { continue }
+
+            let grandchildren = visibleChildren(of: child, limit: maxInnerItems)
+            let (innerRects, innerRest) = layout(grandchildren, total: child.size, in: room)
+            var innerCursor: Int64 = 0
+            for (grandchild, innerRect) in zip(grandchildren, innerRects) {
+                let position = (Double(innerCursor) + Double(grandchild.size) / 2) / Double(child.size)
+                innerCursor += grandchild.size
+                let innerTile = innerRect.insetBy(dx: 0.5, dy: 0.5)
+                guard innerTile.width >= 1, innerTile.height >= 1 else { continue }
+                inner.append(TreemapCell(node: grandchild, rect: innerTile, depth: 2,
+                                         hue: middle + (position - 0.5) * 0.08, hasChildren: false))
+            }
+            if let restRect = innerRest, restRect.width >= 2, restRect.height >= 2 {
+                inner.append(TreemapCell(node: child, rect: restRect.insetBy(dx: 0.5, dy: 0.5), depth: 2, hue: middle,
+                                         hasChildren: false, restCount: child.children.count - grandchildren.count))
+            }
+        }
+        if let restRect = restRect, restRect.width >= 2, restRect.height >= 2 {
+            result.append(TreemapCell(node: focus, rect: restRect.insetBy(dx: gap / 2, dy: gap / 2), depth: 1, hue: 0,
+                                      hasChildren: false, restCount: focus.children.count - items.count))
+        }
+        // Inner tiles go last so they're drawn on top and found first when clicked.
+        return result + inner
+    }
+
+    private static func visibleChildren(of node: FileNode, limit: Int) -> [FileNode] {
+        var list: [FileNode] = []
+        for child in node.children where child.size > 0 {
+            list.append(child)
+            if list.count == limit { break }
+        }
+        return list
+    }
+
+    /// Lays out items (largest first). Whatever share of `total` they don't cover gets a block of its own,
+    /// placed by size like any other, so every tile keeps a sensible shape.
+    static func layout(_ items: [FileNode], total: Int64, in box: CGRect) -> (items: [CGRect], rest: CGRect?) {
+        var values = items.map { Double($0.size) }
+        let shown = values.reduce(0, +)
+        let rest = Double(total) - shown
+        var restIndex: Int?
+        if rest > max(1, Double(total) * 0.002) {
+            let index = values.firstIndex(where: { $0 < rest }) ?? values.count
+            values.insert(rest, at: index)
+            restIndex = index
+        }
+        var rects = squarify(values, in: box)
+        var restRect: CGRect?
+        if let index = restIndex, index < rects.count {
+            restRect = rects.remove(at: index)
+        }
+        return (rects, restRect)
+    }
+
+    /// Squarified treemap (Bruls, Huizing and van Wijk). `values` must be sorted largest first.
+    static func squarify(_ values: [Double], in bounds: CGRect) -> [CGRect] {
+        let sum = values.reduce(0, +)
+        guard sum > 0, bounds.width > 0, bounds.height > 0 else {
+            return values.map { _ in .zero }
+        }
+        var remaining = bounds
+        let scale = Double(bounds.width * bounds.height) / sum
+        let areas = values.map { $0 * scale }
+
+        var result: [CGRect] = []
+        result.reserveCapacity(areas.count)
+        var row: [Double] = []
+        var index = 0
+        while index < areas.count {
+            let side = Double(min(remaining.width, remaining.height))
+            let candidate = row + [areas[index]]
+            if row.isEmpty || worst(candidate, side: side) <= worst(row, side: side) {
+                row = candidate
+                index += 1
+            } else {
+                result += place(row, in: &remaining)
+                row = []
+            }
+        }
+        if !row.isEmpty {
+            result += place(row, in: &remaining)
+        }
+        return result
+    }
+
+    /// The most stretched aspect ratio in a row laid along a side of length `side`.
+    private static func worst(_ row: [Double], side: Double) -> Double {
+        let sum = row.reduce(0, +)
+        guard sum > 0, side > 0, let largest = row.max(), let smallest = row.min(), smallest > 0 else {
+            return .infinity
+        }
+        let sideSquared = side * side
+        let sumSquared = sum * sum
+        return max(sideSquared * largest / sumSquared, sumSquared / (sideSquared * smallest))
+    }
+
+    /// Puts a row along the short side of the box and returns the box that's left.
+    private static func place(_ row: [Double], in box: inout CGRect) -> [CGRect] {
+        let sum = row.reduce(0, +)
+        var rects: [CGRect] = []
+        if box.width >= box.height {
+            let width = box.height > 0 ? CGFloat(sum) / box.height : 0
+            var y = box.minY
+            for area in row {
+                let height = width > 0 ? CGFloat(area) / width : 0
+                rects.append(CGRect(x: box.minX, y: y, width: width, height: height))
+                y += height
+            }
+            box = CGRect(x: box.minX + width, y: box.minY, width: max(0, box.width - width), height: box.height)
+        } else {
+            let height = box.width > 0 ? CGFloat(sum) / box.width : 0
+            var x = box.minX
+            for area in row {
+                let width = height > 0 ? CGFloat(area) / height : 0
+                rects.append(CGRect(x: x, y: box.minY, width: width, height: height))
+                x += width
+            }
+            box = CGRect(x: box.minX, y: box.minY + height, width: box.width, height: max(0, box.height - height))
+        }
+        return rects
     }
 }

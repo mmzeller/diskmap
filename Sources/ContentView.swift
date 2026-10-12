@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuickLook
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
@@ -27,6 +28,7 @@ struct ContentView: View {
         } message: {
             Text(model.alertMessage ?? "")
         }
+        .quickLookPreview($model.previewURL)
         .frame(minWidth: 1060, minHeight: 680)
     }
 
@@ -55,6 +57,10 @@ struct MainView: View {
         } detail: {
             tabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .sheet(item: $model.uninstallTarget) { _ in
+                    UninstallSheet()
+                        .environmentObject(model)
+                }
                 .navigationTitle(model.root?.name ?? "DiskMap")
                 .navigationSubtitle(subtitle)
                 .toolbar {
@@ -120,6 +126,8 @@ struct MainView: View {
             CategoriesTab()
         case .find:
             FindTab()
+        case .quickClean:
+            QuickCleanTab()
         case .ideas:
             IdeasTab()
         case .growth:
@@ -128,8 +136,12 @@ struct MainView: View {
             UntouchedTab()
         case .duplicates:
             DuplicatesTab()
+        case .apps:
+            AppsTab()
         case .basket:
             BasketTab()
+        case .removed:
+            RemovedTab()
         }
     }
 }
@@ -145,13 +157,16 @@ struct Sidebar: View {
                 row(.find)
             }
             Section("Clean Up") {
+                row(.quickClean)
                 row(.ideas)
                 row(.growth)
                 row(.untouched)
                 row(.duplicates)
             }
             Section("Remove") {
+                row(.apps)
                 row(.basket)
+                row(.removed)
             }
         }
         .listStyle(.sidebar)
