@@ -6,7 +6,7 @@
 
 Works on Apple silicon and Intel Macs with macOS 13 Ventura or newer. Built automatically from this repository's code by GitHub Actions.
 
-## What's new in 2.3
+## What's new in 2.4
 
-- **Update from inside DiskMap**: choose **DiskMap → Check for Updates…**. DiskMap also checks about once a day on its own and shows an **Update** button when a new version is out. One click downloads it, checks it, and reopens DiskMap on the new version.
-- **Settings → Updates** turns the daily check on or off.
+- **Full Disk Access now stays on through updates.** DiskMap is signed with its own key from this version on, so macOS recognizes each new version as the same app. Turn Full Disk Access on once after installing 2.4 and it stays on.
+- **Safer updates**: DiskMap only installs an update that's signed with that same key.
