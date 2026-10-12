@@ -1,4 +1,4 @@
-name: Signing self-test
+name: Signing and update self-test
 
 # Proves on a real Mac that the signing setup works, using a throwaway key made by the same
 # script you run: the key loads, build.sh signs with it, the signed app runs, and a later
@@ -10,6 +10,7 @@ on:
       - 'scripts/**'
       - 'Tests/**'
       - 'Sources/CodeSigning.swift'
+      - 'Sources/Updater.swift'
       - 'build.sh'
       - '.github/workflows/signing-test.yml'
   workflow_dispatch:
@@ -56,3 +57,66 @@ jobs:
         run: |
           swiftc -O Sources/CodeSigning.swift Tests/SigningCheck/main.swift -o "$RUNNER_TEMP/signing-check"
           "$RUNNER_TEMP/signing-check" "$RUNNER_TEMP/signed.app" "$RUNNER_TEMP/resigned.app" "$RUNNER_TEMP/adhoc.app"
+
+      - name: The updater replaces a running copy of itself
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' build.sh)
+          (cd build && ditto -c -k --keepParent DiskMap.app "$RUNNER_TEMP/release.zip")
+
+          # An unsigned zip, which a key-signed copy must refuse.
+          mkdir -p "$RUNNER_TEMP/adhoc-release"
+          cp -R build/DiskMap.app "$RUNNER_TEMP/adhoc-release/DiskMap.app"
+          codesign --force --deep --sign - --identifier io.github.mmzeller.DiskMap "$RUNNER_TEMP/adhoc-release/DiskMap.app"
+          (cd "$RUNNER_TEMP/adhoc-release" && ditto -c -k --keepParent DiskMap.app "$RUNNER_TEMP/adhoc-release.zip")
+
+          # An older installed copy, signed with the key (sign = key) or ad hoc (sign = -).
+          install_old() {
+            rm -rf "$RUNNER_TEMP/Apps"; mkdir -p "$RUNNER_TEMP/Apps"
+            cp -R build/DiskMap.app "$RUNNER_TEMP/Apps/DiskMap.app"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.1" "$RUNNER_TEMP/Apps/DiskMap.app/Contents/Info.plist"
+            if [ "$1" = key ]; then
+              codesign --force --deep --timestamp=none --sign "$SIGN_IDENTITY" --keychain "$SIGN_KEYCHAIN" \
+                --identifier io.github.mmzeller.DiskMap "$RUNNER_TEMP/Apps/DiskMap.app"
+            else
+              codesign --force --deep --sign - --identifier io.github.mmzeller.DiskMap "$RUNNER_TEMP/Apps/DiskMap.app"
+            fi
+          }
+          run_update() {
+            DISKMAP_SELF_TEST=1 perl -e 'alarm 120; exec @ARGV' \
+              "$RUNNER_TEMP/Apps/DiskMap.app/Contents/MacOS/DiskMap" --test-install "$1" "$VERSION"
+          }
+          installed_version() {
+            /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$RUNNER_TEMP/Apps/DiskMap.app/Contents/Info.plist"
+          }
+          only_the_app_is_left() {
+            [ "$(ls -A "$RUNNER_TEMP/Apps")" = "DiskMap.app" ]
+          }
+
+          # 1. Unsigned old copy -> key-signed release (the move from 2.3 to the first signed version).
+          install_old adhoc
+          run_update "$RUNNER_TEMP/release.zip"
+          [ "$(installed_version)" = "$VERSION" ]
+          only_the_app_is_left
+          codesign --verify --deep --strict "$RUNNER_TEMP/Apps/DiskMap.app"
+          echo "::notice::PASS an unsigned copy updated itself to the key-signed $VERSION"
+
+          # 2. Key-signed old copy -> key-signed release.
+          install_old key
+          run_update "$RUNNER_TEMP/release.zip"
+          [ "$(installed_version)" = "$VERSION" ]
+          only_the_app_is_left
+          codesign --verify --deep --strict "$RUNNER_TEMP/Apps/DiskMap.app"
+          echo "::notice::PASS a key-signed copy updated itself to $VERSION"
+
+          # 3. Key-signed old copy refuses an unsigned release and stays as it was.
+          install_old key
+          if run_update "$RUNNER_TEMP/adhoc-release.zip"; then
+            echo "::error::FAIL a key-signed copy accepted an unsigned update"; exit 1
+          fi
+          [ "$(installed_version)" = "0.1" ]
+          only_the_app_is_left
+          echo "::notice::PASS a key-signed copy refused an unsigned update and was left untouched"
+
+          echo "--- update log ---"; cat ~/Library/Logs/DiskMap/Updates.log

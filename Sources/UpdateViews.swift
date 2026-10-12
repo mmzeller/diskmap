@@ -48,7 +48,7 @@ struct UpdateSheet: View {
         case .upToDate: return "You have the newest version, \(updater.currentVersion)."
         case .available: return "You have version \(updater.currentVersion)."
         case .downloading: return "Downloading the new version…"
-        case .installing: return "Checking the download and putting it in place…"
+        case .installing: return updater.installStep.isEmpty ? "Putting the new version in place…" : updater.installStep
         case .failed: return "Nothing was changed. You still have version \(updater.currentVersion)."
         case .updated: return "Your scans, history and settings were kept."
         }
@@ -124,6 +124,7 @@ struct UpdateSheet: View {
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
         case .failed:
+            Button("Show Log") { updater.showLog() }
             Button("Open Download Page") { updater.openDownloadPage() }
             Button("Close") { updater.dismiss() }
                 .keyboardShortcut(.defaultAction)

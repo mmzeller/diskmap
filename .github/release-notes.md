@@ -6,7 +6,8 @@
 
 Works on Apple silicon and Intel Macs with macOS 13 Ventura or newer. Built automatically from this repository's code by GitHub Actions.
 
-## What's new in 2.4
+## What's new in 2.5
 
-- **Full Disk Access now stays on through updates.** DiskMap is signed with its own key from this version on, so macOS recognizes each new version as the same app. Turn Full Disk Access on once after installing 2.4 and it stays on.
-- **Safer updates**: DiskMap only installs an update that's signed with that same key.
+- **Fixed: updating could get stuck** on "Checking the download and putting it in place". The updater now swaps the app with simple file moves, gives up with a clear message instead of waiting forever, and quits and reopens reliably.
+- If an update can't finish, **Show Log** opens a record of each step (in `~/Library/Logs/DiskMap`).
+- Signed with DiskMap's own key, so Full Disk Access stays on through future updates.

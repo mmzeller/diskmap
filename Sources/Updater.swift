@@ -27,6 +27,8 @@ final class Updater: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published var showSheet = false
+    /// What the installer is doing right now, shown under "Updating DiskMap".
+    @Published private(set) var installStep = ""
     /// A newer version, once a check has found one.
     @Published private(set) var available: ReleaseInfo?
     @Published private(set) var lastChecked: Date?
@@ -151,16 +153,34 @@ final class Updater: ObservableObject {
                     }
                 }
                 let zip = try await downloader.download(release.downloadURL)
+                updater.installStep = "Unpacking…"
                 updater.phase = .installing
+                updater.startWatchdog()
                 let installed = try await Task.detached(priority: .userInitiated) { () -> URL in
-                    try UpdateInstaller.install(zip: zip, in: folder, version: release.version, replacing: appURL)
+                    try UpdateInstaller.install(zip: zip, in: folder, version: release.version, replacing: appURL) { step in
+                        Task { @MainActor in updater.installStep = step }
+                    }
                 }.value
+                // Even if the watchdog gave up, the new version is in place now, so reopen on it.
                 UserDefaults.standard.set(from, forKey: Keys.updatedFrom)
                 UserDefaults.standard.set(release.notes, forKey: Keys.notes)
+                updater.installStep = "Reopening…"
                 UpdateInstaller.relaunch(installed)
             } catch {
+                UpdateLog.write("Failed: \(error.localizedDescription)")
+                if case .installing = updater.phase {} else if case .downloading = updater.phase {} else { return }
                 updater.phase = .failed(error.localizedDescription)
             }
+        }
+    }
+
+    /// If installing ever takes far longer than it should, give the window back with a way out.
+    private func startWatchdog() {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 90 * 1_000_000_000)
+            guard let self = self, case .installing = self.phase else { return }
+            UpdateLog.write("Gave up waiting at step: \(self.installStep)")
+            self.phase = .failed("Installing took too long (it stopped at “\(self.installStep)”). Your current version is still there. Use Open Download Page to install the new one by hand.")
         }
     }
 
@@ -168,6 +188,10 @@ final class Updater: ObservableObject {
         if case .downloading = phase {
             phase = .downloading(fraction)
         }
+    }
+
+    func showLog() {
+        NSWorkspace.shared.activateFileViewerSelecting([UpdateLog.url])
     }
 
     func openDownloadPage() {
@@ -321,6 +345,27 @@ final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendabl
     }
 }
 
+/// A running record of each update, for working out what went wrong.
+enum UpdateLog {
+    static var url: URL {
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DiskMap", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("Updates.log")
+    }
+
+    static func write(_ message: String) {
+        let line = ISO8601DateFormatter().string(from: Date()) + "  " + message + "\n"
+        guard let data = line.data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            try? data.write(to: url)
+        }
+    }
+}
+
 /// Unpacks, checks and installs a downloaded copy of DiskMap.
 enum UpdateInstaller {
     struct Problem: LocalizedError {
@@ -340,16 +385,26 @@ enum UpdateInstaller {
     }
 
     /// Returns where the new version now is (the same place as the old one).
-    static func install(zip: URL, in folder: URL, version: String, replacing current: URL) throws -> URL {
+    /// Every step either finishes quickly or fails with a message; none of them can wait on a dialog.
+    static func install(zip: URL, in folder: URL, version: String, replacing current: URL,
+                        step: @escaping @Sendable (String) -> Void) throws -> URL {
         let fm = FileManager.default
+        func report(_ text: String) {
+            UpdateLog.write(text)
+            step(text)
+        }
+        UpdateLog.write("Installing \(version) over \(current.path)")
+
+        report("Unpacking…")
         let unpacked = folder.appendingPathComponent("unpacked", isDirectory: true)
         try? fm.removeItem(at: unpacked)
         try fm.createDirectory(at: unpacked, withIntermediateDirectories: true)
-        guard run("/usr/bin/ditto", ["-x", "-k", zip.path, unpacked.path]) == 0 else {
+        guard run("/usr/bin/ditto", ["-x", "-k", zip.path, unpacked.path], timeout: 120) == 0 else {
             throw Problem(message: "The download couldn't be unpacked. Nothing was changed.")
         }
 
         // Make sure it's really the version we expect, and undamaged.
+        report("Checking the download…")
         let newApp = unpacked.appendingPathComponent("DiskMap.app", isDirectory: true)
         guard let info = NSDictionary(contentsOf: newApp.appendingPathComponent("Contents/Info.plist")),
               info["CFBundleIdentifier"] as? String == Bundle.main.bundleIdentifier else {
@@ -359,7 +414,7 @@ enum UpdateInstaller {
         guard downloaded == version else {
             throw Problem(message: "The download is version \(downloaded) instead of \(version). Nothing was changed.")
         }
-        guard run("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path]) == 0 else {
+        guard run("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path], timeout: 60) == 0 else {
             throw Problem(message: "The download is damaged (its signature doesn't match its contents). Nothing was changed.")
         }
         // Once DiskMap is signed with its own key, only accept updates signed with that same key.
@@ -369,37 +424,57 @@ enum UpdateInstaller {
                 throw Problem(message: "The download isn't signed with DiskMap's signing key, so it wasn't installed. Nothing was changed.")
             }
         }
-        _ = run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path])
+        _ = run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path], timeout: 30)
 
-        // Swap the new app in where the old one is.
-        do {
-            _ = try fm.replaceItemAt(current, withItemAt: newApp, backupItemName: nil, options: [.usingNewMetadataOnly])
-        } catch {
-            // macOS can stop an app from replacing app bundles; Finder is always allowed to.
-            guard finderReplace(current, with: newApp) else {
-                throw Problem(message: "macOS didn't let DiskMap replace itself (\(error.localizedDescription)). Use Open Download Page to install it by hand.")
-            }
-        }
+        report("Putting the new version in place…")
+        try swap(current, with: newApp)
         let installed = NSDictionary(contentsOf: current.appendingPathComponent("Contents/Info.plist"))
         guard installed?["CFBundleShortVersionString"] as? String == version else {
             throw Problem(message: "The new version couldn't be put in place. Use Open Download Page to install it by hand.")
         }
         try? fm.removeItem(at: folder)
+        report("Installed \(version)")
         return current
     }
 
-    /// Asks Finder to move the old app to the Trash and put the new one in its place.
-    private static func finderReplace(_ current: URL, with newApp: URL) -> Bool {
-        func quoted(_ path: String) -> String {
-            "\"" + path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    /// Replaces the app with plain renames in its own folder: the new version goes next to the old
+    /// one, the old one steps aside, the new one takes its name. If anything fails, the old one is
+    /// put back.
+    private static func swap(_ current: URL, with newApp: URL) throws {
+        let fm = FileManager.default
+        let folder = current.deletingLastPathComponent()
+        let tag = String(UUID().uuidString.prefix(8))
+        let incoming = folder.appendingPathComponent(".DiskMap-incoming-\(tag).app", isDirectory: true)
+        let outgoing = folder.appendingPathComponent(".DiskMap-previous-\(tag).app", isDirectory: true)
+        let notAllowed = "macOS didn't let DiskMap change \(folder.path). Use Open Download Page and drag the new DiskMap into Applications yourself."
+
+        do {
+            try fm.moveItem(at: newApp, to: incoming)
+        } catch {
+            UpdateLog.write("Move next to the app failed: \(error)")
+            throw Problem(message: notAllowed)
         }
-        let script = """
-        tell application "Finder"
-            delete (POSIX file \(quoted(current.path)) as alias)
-            move (POSIX file \(quoted(newApp.path)) as alias) to (POSIX file \(quoted(current.deletingLastPathComponent().path)) as alias)
-        end tell
-        """
-        return run("/usr/bin/osascript", ["-e", script]) == 0
+        do {
+            try fm.moveItem(at: current, to: outgoing)
+        } catch {
+            UpdateLog.write("Moving the old version aside failed: \(error)")
+            try? fm.removeItem(at: incoming)
+            throw Problem(message: notAllowed)
+        }
+        do {
+            try fm.moveItem(at: incoming, to: current)
+        } catch {
+            UpdateLog.write("Moving the new version in failed: \(error)")
+            try? fm.moveItem(at: outgoing, to: current)
+            try? fm.removeItem(at: incoming)
+            throw Problem(message: notAllowed)
+        }
+        // The old version goes to the Trash, out of sight (its name starts with a dot).
+        do {
+            try fm.trashItem(at: outgoing, resultingItemURL: nil)
+        } catch {
+            try? fm.removeItem(at: outgoing)
+        }
     }
 
     /// Waits for this copy of DiskMap to quit, then opens the new one.
@@ -409,17 +484,29 @@ enum UpdateInstaller {
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = [
             "-c",
-            "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$2\"",
+            "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /bin/sleep 0.5; /usr/bin/open \"$2\"",
             "sh",
             String(ProcessInfo.processInfo.processIdentifier),
             app.path,
         ]
-        try? process.run()
+        do {
+            try process.run()
+        } catch {
+            UpdateLog.write("Couldn't start the reopen helper: \(error)")
+        }
+        UserDefaults.standard.synchronize()
+        UpdateLog.write("Quitting to reopen \(app.path)")
         NSApp.terminate(nil)
+        // If something keeps the app from quitting (an open window or sheet, for example), quit anyway.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            UpdateLog.write("Quit didn't finish; exiting")
+            exit(0)
+        }
     }
 
+    /// Runs a command-line tool, giving up after `timeout` seconds so nothing can hang the update.
     @discardableResult
-    private static func run(_ tool: String, _ arguments: [String]) -> Int32 {
+    private static func run(_ tool: String, _ arguments: [String], timeout: TimeInterval) -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tool)
         process.arguments = arguments
@@ -427,10 +514,42 @@ enum UpdateInstaller {
         process.standardError = FileHandle.nullDevice
         do {
             try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus
         } catch {
+            UpdateLog.write("\(tool) couldn't start: \(error)")
             return -1
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning {
+            if Date() > deadline {
+                process.terminate()
+                UpdateLog.write("\(tool) took longer than \(Int(timeout)) seconds and was stopped")
+                return -2
+            }
+            usleep(50_000)
+        }
+        if process.terminationStatus != 0 {
+            UpdateLog.write("\(tool) exited with \(process.terminationStatus)")
+        }
+        return process.terminationStatus
+    }
+}
+
+/// Lets the automated tests run the real installer against a copy of DiskMap that's replacing itself.
+enum UpdateSelfTest {
+    static func run(zip: String, version: String) -> Int32 {
+        let app = Bundle.main.bundleURL
+        do {
+            let folder = try UpdateInstaller.workFolder(near: app)
+            let copy = folder.appendingPathComponent("DiskMap.zip")
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: zip), to: copy)
+            let installed = try UpdateInstaller.install(zip: copy, in: folder, version: version, replacing: app) { step in
+                print("step: \(step)")
+            }
+            print("installed: \(installed.path)")
+            return 0
+        } catch {
+            print("refused or failed: \(error.localizedDescription)")
+            return 1
         }
     }
 }

@@ -11,6 +11,12 @@ enum Main {
         if CommandLine.arguments.contains("--background-check") {
             exit(BackgroundCheck.run())
         }
+        // Used only by the automated tests on GitHub: install a downloaded zip over this copy.
+        let arguments = CommandLine.arguments
+        if ProcessInfo.processInfo.environment["DISKMAP_SELF_TEST"] == "1",
+           let index = arguments.firstIndex(of: "--test-install"), arguments.count > index + 2 {
+            exit(UpdateSelfTest.run(zip: arguments[index + 1], version: arguments[index + 2]))
+        }
         DiskMapApp.main()
     }
 }
