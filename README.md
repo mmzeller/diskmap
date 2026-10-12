@@ -2,7 +2,7 @@
 
 A free disk-space map for your Mac, in the spirit of DaisyDisk, with a few things DaisyDisk doesn't do:
 
-- **Explains mystery folders.** Hashed folders like Safari's website data are translated into the site they belong to ("Safari data for lookmovie2.to"). App containers, caches, iPhone backups and leftovers from deleted apps get plain-language labels and a safety rating.
+- **Explains mystery folders.** Hashed folders like Safari's website data are translated into the site they belong to. App containers, caches, iPhone backups and leftovers from deleted apps get plain-language labels and a safety rating.
 - **Cleanup Ideas.** A ranked list of big items that are safe or probably safe to remove, each with an explanation.
 - **What Grew.** Every scan saves a snapshot. The next scan shows exactly which folders grew and by how much.
 - **Background checks.** DiskMap can check your disk every day or week on its own and notify you when usage grows past a limit you set, or when the disk is nearly full.
